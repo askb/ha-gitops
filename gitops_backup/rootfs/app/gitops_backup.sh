@@ -240,6 +240,14 @@ main() {
     write_secret_excludes
     trap cleanup_branch EXIT
 
+    # Unmerged index entries left by an older version after a stash conflict
+    # make every git write fail ("needs merge" / "could not write index").
+    # Drop them; the working tree (the live config) is left untouched.
+    if [ -n "$(git ls-files -u)" ]; then
+        log "Clearing unmerged index entries left by an earlier stash conflict"
+        git reset -q
+    fi
+
     # 1–2. Stash local drift, sync upstream (merged PRs flow back here)
     local stashed=false
     if [ -n "$(git status --porcelain)" ]; then
@@ -258,6 +266,10 @@ main() {
     # 3. Re-apply drift
     if [ "$stashed" = true ] && ! git stash pop -q; then
         git checkout -q --theirs . 2>/dev/null || true
+        # checkout --theirs only rewrites the files: the index still holds the
+        # conflict, which blocks the next run's stash. Unstage everything so
+        # the kept live files are plain drift for the backup below.
+        git reset -q
         git stash drop -q 2>/dev/null || true
         write_status warning stash_conflict "kept live config where conflicting"
     fi
