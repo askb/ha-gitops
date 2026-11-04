@@ -84,6 +84,41 @@ grep -q "^changed$" "$TMP/config/configuration.yaml" \
   || { echo "FAIL: main not synced to the merged PR"; exit 1; }
 [ -z "$(git -C "$TMP/config" stash list)" ] || { echo "FAIL: stash left behind"; exit 1; }
 
+# 3c. Stash conflict: upstream and the live config both changed the same file
+#     (e.g. a HACS update on the box while a PR touched it). The run must keep
+#     the live version, leave no unmerged index entries, and the next run must
+#     not fail with "needs merge" / "could not write index".
+[ -d "$TMP/merge" ] || git clone -q -b main "$TMP/origin.git" "$TMP/merge"
+git -C "$TMP/merge" pull -q origin main
+echo "upstream edit" > "$TMP/merge/configuration.yaml"
+git -C "$TMP/merge" -c user.name=T -c user.email=t@localhost \
+  commit -q -am "upstream change"
+git -C "$TMP/merge" push -q origin main
+echo "live edit" > "$TMP/config/configuration.yaml"
+run
+grep -q "warning:stash_conflict" "$TMP/config/gitops_backup.log" \
+  || { echo "FAIL: stash conflict not reported"; exit 1; }
+grep -q "^live edit$" "$TMP/config/configuration.yaml" \
+  || { echo "FAIL: live config not kept on stash conflict"; exit 1; }
+[ -z "$(git -C "$TMP/config" ls-files -u)" ] \
+  || { echo "FAIL: unmerged index entries left after stash conflict"; exit 1; }
+sleep 1  # distinct auto-backup/<timestamp> branch name
+run
+status | grep -qE "^(success|warning:branch_pushed)" \
+  || { echo "FAIL: run after stash conflict = $(status)"; exit 1; }
+
+# 3d. A repo already stuck with unmerged entries (left by an older version)
+#     heals on the next run instead of failing forever.
+blob=$(git -C "$TMP/config" hash-object -w configuration.yaml)
+printf '100644 %s 2\tconfiguration.yaml\n100644 %s 3\tconfiguration.yaml\n' "$blob" "$blob" \
+  | git -C "$TMP/config" update-index --index-info
+[ -n "$(git -C "$TMP/config" ls-files -u)" ] || { echo "FAIL: test setup, no unmerged entry"; exit 1; }
+sleep 1
+run
+[ -z "$(git -C "$TMP/config" ls-files -u)" ] \
+  || { echo "FAIL: stuck unmerged index not cleared"; exit 1; }
+status | grep -qvE "^error" || { echo "FAIL: stuck repo still errors = $(status)"; exit 1; }
+
 # 4. Migration case: repo already had its own .gitignore lacking the addon's
 #    entries, and was never excluded. The addon's own status file + log AND any
 #    secrets/credentials must be kept out of the backup — even an already-
