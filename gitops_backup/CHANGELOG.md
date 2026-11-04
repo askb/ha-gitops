@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0
+
+- Security: backup/editor copies of `secrets.yaml` (`secrets.yaml.*`, `*.bak`,
+  `*.bak-*`, `*.orig`, `*.secret`) and `zigbee2mqtt/secret.yaml` are now on the
+  never-commit list. A `secrets.yaml.bak-<date>` left by a manual edit was
+  enough to put every real secret into a backup PR.
+- Security: the GitHub token is no longer stored in `/config/.git/config`
+  (readable by any add-on with config access and included in HA full
+  backups). The remote is token-less; auth is passed per network call via
+  `http.extraheader`. Existing installs are scrubbed on the next run.
+- Fix: one open backup PR at a time. While a PR is unmerged, new drift is
+  pushed onto its branch (`pr_updated`) and unchanged drift is a no-op
+  (`pr_open_unchanged`) instead of opening a near-identical PR every run
+  (a consequence of 0.3.1 keeping drift on disk until merged).
+- Change: the backup commit is built from the index (`write-tree` /
+  `commit-tree`) — the add-on never switches branches in `/config` any more.
+- Change: commit and PR bodies list the changed files.
+- Change: `GITHUB_API_URL` is honoured (GitHub Enterprise / tests).
+- Template: required HA gate bumped from 2026.3 to 2026.10.
+
 ## 0.3.1
 
 - Fix: after pushing a backup branch the add-on no longer rolls the live

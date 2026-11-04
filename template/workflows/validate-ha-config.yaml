@@ -39,7 +39,7 @@ jobs:
         include:
           # Pin a known-good HA version as the required gate;
           # track stable as an early-warning (non-blocking) leg.
-          - version: "2026.3"
+          - version: "2026.10"
             experimental: false
           - version: "stable"
             experimental: true
@@ -92,7 +92,7 @@ jobs:
           docker run -d --name ha \
             -v "$PWD:/config" \
             -p 8123:8123 \
-            ghcr.io/home-assistant/home-assistant:2026.3
+            ghcr.io/home-assistant/home-assistant:2026.10
           up=false
           for _ in $(seq 1 90); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8123/ || true)
