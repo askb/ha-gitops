@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+- Fix: `secrets.yaml.*` in 0.4.0 also matched committed templates such as
+  `secrets.yaml.example`, untracking them and putting their deletion into
+  the backup PR. `secrets.yaml.{example,sample,template,dist}` are now
+  explicitly allowed; `*.bak.*` (e.g. `entity_registry.bak.<ts>` registry
+  dumps) is excluded. The untracker now uses git's own matcher so negations
+  behave exactly as in `.gitignore`.
+
 ## 0.4.0
 
 - Security: backup/editor copies of `secrets.yaml` (`secrets.yaml.*`, `*.bak`,
