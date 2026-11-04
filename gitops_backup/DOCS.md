@@ -123,9 +123,19 @@ already live on the box and git history simply resumes.
 ## What is committed
 
 Everything in your config folder **except** the seeded `.gitignore` exclusions:
-`secrets.yaml`, `.storage/`, `.cloud/`, databases, logs, `*.token`,
-`.google.token`, `known_devices.yaml`, `ip_bans.yaml`, and the add-on's own
-status/log files.
+`secrets.yaml` and any copy of it (`secrets.yaml.*`, `*.bak`, `*.bak-*`,
+`*.orig`, `*.secret`, `zigbee2mqtt/secret.yaml`), `.storage/`, `.cloud/`,
+databases, logs, `*.key`, `*.pem`, `*.token`, `.google.token`,
+`known_devices.yaml`, `ip_bans.yaml`, and the add-on's own status/log files.
+The secret patterns are also enforced through `.git/info/exclude` on every
+run, so they hold for migrated repos with their own `.gitignore` too.
+
+## Backup PRs
+
+One open backup PR at a time: if the previous PR has not been merged yet,
+new drift is committed on top of its branch (status `pr_updated`); if nothing
+changed since, the run is a no-op (`pr_open_unchanged`). Commit and PR
+bodies list the changed files.
 
 ## Status in Home Assistant
 

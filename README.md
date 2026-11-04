@@ -129,13 +129,13 @@ command_line:
 
 ## Deploying merged changes back to the box
 
-Merged PRs are picked up automatically on the next scheduled run. To apply
-immediately:
+Merged PRs are pulled into `/config` on the next scheduled run and applied
+to the running Home Assistant according to `apply_after_pull` (`reload`
+by default, `restart` for `configuration.yaml` / `custom_components/`
+changes). To apply immediately, restart the add-on with `run_at_start: true`.
 
-```bash
-ssh root@<HA_IP> 'cd /homeassistant && git fetch origin && git reset --hard origin/main'
-ssh root@<HA_IP> 'ha core restart'
-```
+Do **not** `git reset --hard` in `/config` by hand: any UI edit made since
+the last backup is uncommitted drift and would be wiped.
 
 ## Options
 
@@ -150,13 +150,22 @@ ssh root@<HA_IP> 'ha core restart'
 | `dry_run` | `false` | Log what would change; push nothing |
 | `commit_name` / `commit_email` | see config | Commit author |
 | `signoff` | `true` | Add `Signed-off-by` (DCO) to commits |
+| `apply_after_pull` | `reload` | Apply merged PRs to the running HA: `reload` / `restart` / `off` |
 
 ## Security notes
 
-- The token lives in the add-on options (Supervisor-encrypted), never in git.
-- The seeded `.gitignore` excludes `secrets.yaml`, `.storage/`, `.cloud/`,
-  databases, logs, and the add-on's own status/log files (committing status
-  files creates a PR-per-day feedback loop — learned the hard way).
+- The token lives in the add-on options (Supervisor-encrypted), never in git
+  and never in `.git/config` — it is passed per network call only, so other
+  add-ons with config access and HA full backups never see it.
+- `secrets.yaml` **and any copy of it** (`secrets.yaml.bak-*`, `*.orig`,
+  `*.bak`, `zigbee2mqtt/secret.yaml`), `.storage/`, `.cloud/`, keys/tokens,
+  databases, logs, and the add-on's own status/log files are excluded on
+  every run via `.git/info/exclude` — not just the seeded `.gitignore` — and
+  anything a previous run already committed is untracked automatically.
+  (Committing status files creates a PR-per-day feedback loop — learned the
+  hard way.)
+- While a backup PR is open, new drift is pushed onto that same PR instead of
+  opening another one each day.
 - CI validates with **stub** secrets; your real `secrets.yaml` never leaves the box.
 - Nothing in this add-on ever force-pushes or writes to your base branch after
   the initial bootstrap import.

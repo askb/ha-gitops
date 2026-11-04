@@ -46,13 +46,17 @@ grep -q "^secrets.yaml$" "$TMP/config/.gitignore" || { echo "FAIL: secrets.yaml 
 # 2. real bootstrap against local bare origin (remote URL rewritten via insteadOf)
 options false
 HOME="$TMP" git config --global "url.$TMP/origin.git.insteadOf" \
-  "https://x-access-token:test-token@github.com/local/test.git"
+  "https://github.com/local/test.git"
 run
 git -C "$TMP/config" log --oneline -1 | grep -q "initial" || { echo "FAIL: no bootstrap commit"; exit 1; }
 git -c safe.bareRepository=all -C "$TMP/origin.git" rev-parse main >/dev/null || { echo "FAIL: main not pushed"; exit 1; }
 # secrets must not be committed
 if git -C "$TMP/config" ls-files | grep -q secrets.yaml; then
   echo "FAIL: secrets.yaml committed"; exit 1
+fi
+# the token must never land on disk
+if grep -rq "test-token" "$TMP/config/.git/config" "$TMP/.gitconfig" 2>/dev/null; then
+  echo "FAIL: GitHub token written to a git config file"; exit 1
 fi
 
 # 3. drift -> backup branch (PR API unreachable => warning:branch_pushed)
@@ -147,6 +151,70 @@ if echo "$tree" | grep -qE '^\.google\.token$|^leaked\.key$|^secrets\.yaml$'; th
   echo "FAIL: a secret/credential was committed to the backup branch"; exit 1
 fi
 echo "$tree" | grep -q "^configuration.yaml$" || { echo "FAIL: real drift not backed up"; exit 1; }
+
+# 4b. Backup/editor copies of secrets.yaml are the easiest way to leak a real
+#     secret (regression: a `secrets.yaml.bak-<date>` once made it into a PR).
+sleep 1
+cp "$TMP/config/secrets.yaml" "$TMP/config/secrets.yaml.bak-20260101"
+echo "secret: old" > "$TMP/config/automations.yaml.orig"
+mkdir -p "$TMP/config/zigbee2mqtt"
+echo "network_key: 1" > "$TMP/config/zigbee2mqtt/secret.yaml"
+echo "bak drift" >> "$TMP/config/configuration.yaml"
+run
+newbranch=$(git -c safe.bareRepository=all -C "$TMP/origin.git" branch \
+  | grep -o 'auto-backup/[^ ]*' | tail -1)
+tree=$(git -c safe.bareRepository=all -C "$TMP/origin.git" ls-tree -r --name-only "$newbranch")
+if echo "$tree" | grep -qE 'secrets\.yaml\.bak|\.orig$|zigbee2mqtt/secret\.yaml'; then
+  echo "FAIL: secrets backup copy committed to backup branch"; exit 1
+fi
+[ -f "$TMP/config/secrets.yaml.bak-20260101" ] \
+  || { echo "FAIL: live file removed by backup"; exit 1; }
+
+# 4c. PR de-duplication: while a backup PR is still open, new drift must be
+#     pushed onto that PR's branch, and unchanged drift must not create a
+#     second branch. A tiny local stub plays the GitHub pulls API.
+openbranch="$newbranch"
+cat > "$TMP/api.py" <<EOF
+import json, http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        body = json.dumps([{"head": {"ref": "$openbranch",
+                "repo": {"owner": {"login": "local"}}}}]).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.end_headers(); self.wfile.write(body)
+    def do_POST(self):
+        self.send_response(201); self.end_headers()
+        self.wfile.write(b'{"html_url": "http://stub/pr/1"}')
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(srv.server_port, flush=True)
+srv.serve_forever()
+EOF
+python3 "$TMP/api.py" > "$TMP/api.port" & apipid=$!
+trap 'kill $apipid 2>/dev/null; rm -rf "$TMP"' EXIT
+for _ in $(seq 1 50); do [ -s "$TMP/api.port" ] && break; sleep 0.1; done
+GITHUB_API_URL="http://127.0.0.1:$(cat "$TMP/api.port")"
+export GITHUB_API_URL
+before=$(git -c safe.bareRepository=all -C "$TMP/origin.git" branch | grep -c 'auto-backup/')
+sleep 1
+run   # same drift as 4b is still uncommitted → nothing new
+status | grep -q "success:pr_open_unchanged" \
+  || { echo "FAIL: unchanged drift status = $(status)"; exit 1; }
+echo "stacked drift" >> "$TMP/config/configuration.yaml"
+sleep 1
+run
+status | grep -q "success:pr_updated:$openbranch" \
+  || { echo "FAIL: stacked drift status = $(status)"; exit 1; }
+after=$(git -c safe.bareRepository=all -C "$TMP/origin.git" branch | grep -c 'auto-backup/')
+[ "$before" = "$after" ] || { echo "FAIL: duplicate backup branch created ($before -> $after)"; exit 1; }
+git -c safe.bareRepository=all -C "$TMP/origin.git" show "$openbranch:configuration.yaml" \
+  | grep -q "^stacked drift$" || { echo "FAIL: new drift not on the open PR branch"; exit 1; }
+[ "$(git -c safe.bareRepository=all -C "$TMP/origin.git" rev-list --count "$openbranch")" -ge 2 ] \
+  || { echo "FAIL: open PR branch not advanced"; exit 1; }
+git -c safe.bareRepository=all -C "$TMP/origin.git" log -1 --format=%B "$openbranch" \
+  | grep -q "^Signed-off-by: Test <test@localhost>$" || { echo "FAIL: sign-off missing"; exit 1; }
+git -C "$TMP/config" branch --show-current | grep -q "^main$" || { echo "FAIL: not on main after update"; exit 1; }
+unset GITHUB_API_URL
 
 # 5. Static wiring checks for apply_after_pull (no HA/Supervisor available here)
 grep -q '"homeassistant_api": true' "${HERE}/../gitops_backup/config.json" \

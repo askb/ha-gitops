@@ -35,8 +35,16 @@ SIGNOFF="$(opt .signoff)"
 APPLY_AFTER_PULL="$(opt .apply_after_pull)"
 [ "$APPLY_AFTER_PULL" = "null" ] && APPLY_AFTER_PULL="reload"
 
-REMOTE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
-API="https://api.github.com/repos/${GITHUB_REPO}"
+# Token-less remote: the token is never written to .git/config (readable by
+# every add-on with config access and captured in HA full backups). Each
+# network call gets it via a one-shot http.extraheader instead (see gh()).
+REMOTE_URL="https://github.com/${GITHUB_REPO}.git"
+API="${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPO}"
+AUTH_B64="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+
+gh() { # git with GitHub auth for this invocation only
+    git -c "http.extraheader=AUTHORIZATION: basic ${AUTH_B64}" "$@"
+}
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $*" | tee -a "$LOG_FILE"; }
 
@@ -86,6 +94,11 @@ seed_gitignore() {
         cat > .gitignore <<'EOF'
 # Secrets and credentials — never commit
 secrets.yaml
+secrets.yaml.*
+*.bak
+*.bak-*
+*.orig
+*.secret
 *.pem
 *.key
 *.token
@@ -93,6 +106,7 @@ secrets.yaml
 .git-credentials
 .cloud/
 .storage/
+zigbee2mqtt/secret.yaml
 
 # Runtime state, databases, logs
 *.db
@@ -122,9 +136,16 @@ EOF
 
 never_commit_patterns() {
     # Secrets, credentials, and the addon's own runtime metadata — must never be
-    # committed. Shared by the exclude writer and the untracker.
+    # committed. Shared by the exclude writer and the untracker. Backup/editor
+    # copies of secrets.yaml (`secrets.yaml.bak-2026…`, `*.orig`) are the most
+    # common way a real secret slips into a PR, so they are covered too.
     cat <<'EOF'
 secrets.yaml
+secrets.yaml.*
+*.bak
+*.bak-*
+*.orig
+*.secret
 *.key
 *.pem
 *.token
@@ -132,6 +153,7 @@ secrets.yaml
 .git-credentials
 .cloud/
 .storage/
+zigbee2mqtt/secret.yaml
 .gitops_backup_status
 gitops_backup.log
 EOF
@@ -190,7 +212,7 @@ bootstrap_if_needed() {
     git commit -q ${SIGNOFF:+-s} -m "chore: initial Home Assistant config import"
     git remote add origin "$REMOTE_URL"
     # Push base branch only on bootstrap; every later change goes through a PR
-    git push -q -u origin "$BASE_BRANCH"
+    gh push -q -u origin "$BASE_BRANCH"
     write_status success bootstrap "initial import pushed to ${BASE_BRANCH}"
     log "Bootstrap complete"
 }
@@ -202,6 +224,23 @@ create_pull_request() {
         --arg h "$branch" --arg base "$BASE_BRANCH" \
         '{title:$t, body:$b, head:$h, base:$base}')
     api_call POST /pulls "$payload" | jq -r '.html_url // empty'
+}
+
+find_open_backup_pr() {
+    # Branch name of the newest open PR from this add-on (head = owner:prefix/*),
+    # or empty when there is none / the API is unreachable (→ open a new PR).
+    api_call GET "/pulls?state=open&base=${BASE_BRANCH}&sort=created&direction=desc&per_page=100" 2>/dev/null \
+        | jq -r --arg p "${BRANCH_PREFIX}/" --arg o "${GITHUB_REPO%%/*}" \
+            '[.[] | select(.head.repo.owner.login == $o and (.head.ref | startswith($p)))][0].head.ref // empty' \
+        2>/dev/null || true
+}
+
+pr_file_list() { # staged changes, for the commit body / PR description
+    git diff --cached --name-status | head -n 50 | awk '{print "- " $1 " " $2}'
+    local n
+    n=$(git diff --cached --name-status | wc -l | tr -d ' ')
+    [ "$n" -gt 50 ] && echo "- … and $((n - 50)) more"
+    return 0
 }
 
 cleanup_branch() {
@@ -256,7 +295,7 @@ main() {
     fi
     local pre_sync post_sync
     pre_sync=$(git rev-parse HEAD)
-    if ! git pull -q --rebase origin "$BASE_BRANCH"; then
+    if ! gh pull -q --rebase origin "$BASE_BRANCH"; then
         git rebase --abort 2>/dev/null || true
         [ "$stashed" = true ] && git stash pop -q 2>/dev/null
         write_status error pull_rebase_failed "resolve manually in ${CONFIG_DIR}"
@@ -305,16 +344,58 @@ main() {
         return 0
     fi
 
-    git checkout -q -b "$branch_name"
+    # Build the backup commit from the index without switching branches, so the
+    # live config is never touched. If an earlier backup PR is still open, stack
+    # the new drift onto it instead of opening a near-identical PR every run.
+    local tree files msg existing_branch existing_head parents=() new_commit
     git add -A
-    git commit -q ${SIGNOFF:+-s} \
-        -m "chore: auto backup $(date '+%Y-%m-%d %H:%M') (${changed_count} files)"
-    git push -q -u origin "$branch_name"
+    tree=$(git write-tree)
+    files=$(pr_file_list)
+    msg="chore: auto backup $(date '+%Y-%m-%d %H:%M') (${changed_count} files)
+
+${files}"
+    [ "$SIGNOFF" = "true" ] && msg="${msg}
+
+Signed-off-by: ${COMMIT_NAME} <${COMMIT_EMAIL}>"
+
+    existing_branch=$(find_open_backup_pr)
+    if [ -n "$existing_branch" ] \
+        && gh fetch -q origin "refs/heads/${existing_branch}" 2>/dev/null; then
+        existing_head=$(git rev-parse FETCH_HEAD)
+        if [ "$(git rev-parse "${existing_head}^{tree}")" = "$tree" ]; then
+            git reset -q
+            write_status success pr_open_unchanged "$existing_branch"
+            log "No new drift since open PR on ${existing_branch}"
+            rotate_log
+            return 0
+        fi
+        branch_name="$existing_branch"
+        parents=(-p "$existing_head")
+        # Base advanced since that PR was opened → make it a merge so the PR
+        # diff stays limited to the drift.
+        git merge-base --is-ancestor HEAD "$existing_head" || parents+=(-p HEAD)
+    else
+        parents=(-p HEAD)
+    fi
+
+    new_commit=$(echo "$msg" | git commit-tree "$tree" "${parents[@]}")
+    git update-ref "refs/heads/${branch_name}" "$new_commit"
+    git reset -q
+    gh push -q origin "refs/heads/${branch_name}:refs/heads/${branch_name}"
+
+    if [ -n "$existing_branch" ] && [ "$branch_name" = "$existing_branch" ]; then
+        write_status success pr_updated "$branch_name"
+        log "✅ Backup complete — pushed ${changed_count} file(s) onto open PR branch ${branch_name}"
+        rotate_log
+        return 0
+    fi
 
     local pr_url
     if pr_url=$(create_pull_request "$branch_name" \
         "chore: auto backup $(date '+%Y-%m-%d %H:%M')" \
-        "Automated Home Assistant config backup — ${changed_count} changed file(s). Opened by the GitOps Config Backup addon; review and merge.") \
+        "Automated Home Assistant config backup — ${changed_count} changed file(s). Opened by the GitOps Config Backup addon; review and merge.
+
+${files}") \
         && [ -n "$pr_url" ]; then
         write_status success pr_created "$pr_url"
         log "✅ Backup complete — PR opened: ${pr_url}"
