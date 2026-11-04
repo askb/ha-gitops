@@ -160,13 +160,24 @@ echo "secret: old" > "$TMP/config/automations.yaml.orig"
 mkdir -p "$TMP/config/zigbee2mqtt"
 echo "network_key: 1" > "$TMP/config/zigbee2mqtt/secret.yaml"
 echo "bak drift" >> "$TMP/config/configuration.yaml"
+# a tracked template must NOT be treated as a secret copy (regression:
+# `secrets.yaml.*` once untracked secrets.yaml.example on a live box)
+echo "api_key: CHANGE_ME" > "$TMP/config/secrets.yaml.example"
+HOME="$TMP" git -C "$TMP/config" add secrets.yaml.example
+HOME="$TMP" git -C "$TMP/config" commit -q -m "add secrets template"
+echo "registry" > "$TMP/config/entity_registry.bak.1793051273"
 run
+if grep -q "Untracking.*secrets.yaml.example" "$TMP/config/gitops_backup.log"; then
+  echo "FAIL: secrets.yaml.example template was untracked as a secret"; exit 1
+fi
 newbranch=$(git -c safe.bareRepository=all -C "$TMP/origin.git" branch \
   | grep -o 'auto-backup/[^ ]*' | tail -1)
 tree=$(git -c safe.bareRepository=all -C "$TMP/origin.git" ls-tree -r --name-only "$newbranch")
-if echo "$tree" | grep -qE 'secrets\.yaml\.bak|\.orig$|zigbee2mqtt/secret\.yaml'; then
+if echo "$tree" | grep -qE 'secrets\.yaml\.bak|\.orig$|zigbee2mqtt/secret\.yaml|\.bak\.[0-9]+$'; then
   echo "FAIL: secrets backup copy committed to backup branch"; exit 1
 fi
+echo "$tree" | grep -q "^secrets.yaml.example$" \
+  || { echo "FAIL: secrets.yaml.example template dropped from backup"; exit 1; }
 [ -f "$TMP/config/secrets.yaml.bak-20260101" ] \
   || { echo "FAIL: live file removed by backup"; exit 1; }
 

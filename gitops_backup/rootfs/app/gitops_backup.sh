@@ -95,8 +95,13 @@ seed_gitignore() {
 # Secrets and credentials — never commit
 secrets.yaml
 secrets.yaml.*
+!secrets.yaml.example
+!secrets.yaml.sample
+!secrets.yaml.template
+!secrets.yaml.dist
 *.bak
 *.bak-*
+*.bak.*
 *.orig
 *.secret
 *.pem
@@ -142,8 +147,13 @@ never_commit_patterns() {
     cat <<'EOF'
 secrets.yaml
 secrets.yaml.*
+!secrets.yaml.example
+!secrets.yaml.sample
+!secrets.yaml.template
+!secrets.yaml.dist
 *.bak
 *.bak-*
+*.bak.*
 *.orig
 *.secret
 *.key
@@ -184,15 +194,18 @@ untrack_secrets() {
     # If a prior run committed a secret/credential, stop tracking it. Called
     # AFTER the upstream sync (not before the stash — a staged deletion would be
     # lost in stash/pop) so the removal counts as drift and flows out through the
-    # next backup PR for review.
+    # next backup PR for review. Uses git's own matcher so negations
+    # (`!secrets.yaml.example`) are honoured exactly like in .gitignore.
     [ -d .git ] || return 0
-    never_commit_patterns | while IFS= read -r pat; do
-        [ -n "$pat" ] || continue
-        if git ls-files --error-unmatch -- "$pat" >/dev/null 2>&1; then
-            log "⚠ Untracking previously-committed sensitive path: ${pat}"
-            git rm -q --cached -r -- "$pat"
-        fi
-    done
+    local f patfile
+    patfile=$(mktemp)   # git mmaps the exclude file; a <(…) pipe reads as empty
+    never_commit_patterns > "$patfile"
+    git ls-files -z -c -i --exclude-from="$patfile" \
+        | while IFS= read -r -d '' f; do
+            log "⚠ Untracking previously-committed sensitive path: ${f}"
+            git rm -q --cached -- "$f"
+        done
+    rm -f "$patfile"
 }
 
 bootstrap_if_needed() {
