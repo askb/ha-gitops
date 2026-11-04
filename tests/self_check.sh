@@ -57,10 +57,32 @@ fi
 
 # 3. drift -> backup branch (PR API unreachable => warning:branch_pushed)
 echo "changed" >> "$TMP/config/configuration.yaml"
+echo "new file" > "$TMP/config/new_automation.yaml"
 run
 git -c safe.bareRepository=all -C "$TMP/origin.git" branch | grep -q "auto-backup/" || { echo "FAIL: no backup branch pushed"; exit 1; }
 status | grep -q "warning:branch_pushed" || { echo "FAIL: drift status = $(status)"; exit 1; }
 git -C "$TMP/config" branch --show-current | grep -q "^main$" || { echo "FAIL: not back on main"; exit 1; }
+# Returning to main must not roll the live config back to the old main
+grep -q "^changed$" "$TMP/config/configuration.yaml" \
+  || { echo "FAIL: live config rolled back after backup"; exit 1; }
+[ -f "$TMP/config/new_automation.yaml" ] \
+  || { echo "FAIL: new live file deleted after backup"; exit 1; }
+
+# 3b. The backup PR gets merged upstream; the next run pulls it and must find
+#     no drift, no conflict, and the live files unchanged.
+backup=$(git -c safe.bareRepository=all -C "$TMP/origin.git" branch \
+  | grep -o 'auto-backup/[^ ]*' | tail -1)
+git clone -q -b main "$TMP/origin.git" "$TMP/merge"
+git -C "$TMP/merge" -c user.name=T -c user.email=t@localhost \
+  merge -q --no-ff -m "Merge backup PR" "origin/$backup"
+git -C "$TMP/merge" push -q origin main
+run
+[ "$(status)" = "success:no_changes:" ] || { echo "FAIL: post-merge status = $(status)"; exit 1; }
+grep -q "^changed$" "$TMP/config/configuration.yaml" \
+  || { echo "FAIL: live config lost after merged-PR sync"; exit 1; }
+[ "$(git -C "$TMP/config" rev-parse HEAD)" = "$(git -C "$TMP/merge" rev-parse HEAD)" ] \
+  || { echo "FAIL: main not synced to the merged PR"; exit 1; }
+[ -z "$(git -C "$TMP/config" stash list)" ] || { echo "FAIL: stash left behind"; exit 1; }
 
 # 4. Migration case: repo already had its own .gitignore lacking the addon's
 #    entries, and was never excluded. The addon's own status file + log AND any

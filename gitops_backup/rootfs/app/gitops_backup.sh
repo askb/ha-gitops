@@ -208,7 +208,14 @@ cleanup_branch() {
     local current
     current=$(git branch --show-current 2>/dev/null || echo "")
     if [ "$current" != "$BASE_BRANCH" ] && [ -n "$current" ]; then
-        git checkout -q "$BASE_BRANCH" 2>/dev/null || true
+        # Point HEAD back at the base branch WITHOUT touching the working tree.
+        # A plain `git checkout` would rewrite /config to the pre-backup base
+        # branch, rolling the live config back until the next run pulls the
+        # merged PR (and losing the drift for good if the PR is never merged).
+        # The drift stays as uncommitted changes and is reconciled by the
+        # stash/pull/pop on the next run.
+        git symbolic-ref HEAD "refs/heads/${BASE_BRANCH}" 2>/dev/null || true
+        git reset -q 2>/dev/null || true
     fi
 }
 

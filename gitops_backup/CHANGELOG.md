@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Fix: after pushing a backup branch the add-on no longer rolls the live
+  config back. Returning to the base branch used `git checkout`, which
+  rewrote `/config` to the pre-backup base branch: every backed-up change
+  (UI edits, HACS updates) vanished from disk until the next run pulled the
+  merged PR, edits made in that window hit stale files (the source of
+  `stash_conflict` / `pull_rebase_failed`), and if the PR was never merged
+  the drift was lost for good. HEAD now moves back without touching the
+  working tree, so the drift stays uncommitted and is reconciled on the next
+  run.
+
 ## 0.3.0
 
 - Feature: `apply_after_pull` — after a merged PR is pulled into `/config`, the

@@ -1,6 +1,6 @@
 {
   "name": "HA GitOps",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "slug": "gitops_backup",
   "description": "PR-gated GitHub backup for your Home Assistant config \u2014 nothing force-pushes, every change is reviewable, CI validates before merge",
   "url": "https://github.com/askb/ha-gitops",
