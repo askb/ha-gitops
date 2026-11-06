@@ -1,4 +1,4 @@
-# HA GitOps — Home Assistant Add-on
+# HA GitOps — Home Assistant App
 
 **PR-gated GitHub backup for your Home Assistant config.** Nothing force-pushes,
 every change is a reviewable pull request, and CI validates your config against
@@ -10,10 +10,10 @@ pinned Home Assistant versions *before* it can merge.
 [![Downloads](https://img.shields.io/github/downloads/askb/ha-gitops/total?label=downloads)](https://github.com/askb/ha-gitops/releases)
 [![License](https://img.shields.io/github/license/askb/ha-gitops)](LICENSE)
 
-## Why another config-backup add-on?
+## Why another config-backup app?
 
 Most config-sync tools upload your files straight onto a branch — some even
-force-push. That gives you a *copy*, not *control*. This add-on treats your
+force-push. That gives you a *copy*, not *control*. This app treats your
 config like production infrastructure:
 
 | | Direct-push sync tools | GitOps Config Backup |
@@ -30,7 +30,7 @@ config like production infrastructure:
 flowchart LR
     subgraph HA["🏠 Home Assistant box"]
         CFG[("/config")]
-        ADDON["GitOps Backup add-on<br/>two-way sync, every run:<br/>⬇ pull merged → ⬆ push drift"]
+        ADDON["GitOps Backup app<br/>two-way sync, every run:<br/>⬇ pull merged → ⬆ push drift"]
         CFG -- "① local edits<br/>(UI, HA upgrades)" --> ADDON
         ADDON -- "⑤ merged changes<br/>applied to /config" --> CFG
     end
@@ -68,8 +68,8 @@ flowchart LR
 ```
 
 **The loop, numbered:** ① you edit via the HA UI (or an upgrade changes files) →
-② the add-on turns that drift into a PR — or you open a config PR yourself →
-③ CI gates it, you merge → ④ the add-on's next run pulls merged `main` →
+② the app turns that drift into a PR — or you open a config PR yourself →
+③ CI gates it, you merge → ④ the app's next run pulls merged `main` →
 ⑤ and applies it to `/config`. Both directions go through the same run:
 it **pulls first, then pushes drift**, so box and repo converge on `main`.
 
@@ -82,16 +82,16 @@ it **pulls first, then pushes drift**, so box and repo converge on `main`.
    a `stable` early-warning leg) **+ a smoke boot** — the pinned HA Core
    container starts with your config and must answer HTTP with no
    `Invalid config` — upgrade breakage surfaces in CI, not on your Pi.
-3. **You merge** (from your phone, if you like). The next add-on run rebases the
+3. **You merge** (from your phone, if you like). The next app run rebases the
    merged state back onto the box.
 
 ## Install
 
-1. Add this repository to your Add-on store (badge above), install
+1. Add this repository to your App store (badge above), install
    **GitOps Config Backup**.
 2. Create a GitHub repo (private recommended) and a fine-grained PAT with
    *Contents: read/write* and *Pull requests: read/write* on it.
-3. Configure the add-on:
+3. Configure the app:
 
 ```yaml
 github_repo: you/your-ha-config
@@ -116,7 +116,7 @@ the initial import; every run after that only ever opens PRs.
 
 ## Status sensor (optional)
 
-The add-on writes `.gitops_backup_status` (`status:detail:extra`) to your config
+The app writes `.gitops_backup_status` (`status:detail:extra`) to your config
 dir. Expose it in HA:
 
 ```yaml
@@ -132,7 +132,7 @@ command_line:
 Merged PRs are pulled into `/config` on the next scheduled run and applied
 to the running Home Assistant according to `apply_after_pull` (`reload`
 by default, `restart` for `configuration.yaml` / `custom_components/`
-changes). To apply immediately, restart the add-on with `run_at_start: true`.
+changes). To apply immediately, restart the app with `run_at_start: true`.
 
 Do **not** `git reset --hard` in `/config` by hand: any UI edit made since
 the last backup is uncommitted drift and would be wiped.
@@ -146,7 +146,7 @@ the last backup is uncommitted drift and would be wiped.
 | `base_branch` | `main` | Branch PRs target |
 | `branch_prefix` | `auto-backup` | Prefix for backup branches |
 | `interval_hours` | `24` | Hours between runs (1–168) |
-| `run_at_start` | `false` | Also run when the add-on starts |
+| `run_at_start` | `false` | Also run when the app starts |
 | `dry_run` | `false` | Log what would change; push nothing |
 | `commit_name` / `commit_email` | see config | Commit author |
 | `signoff` | `true` | Add `Signed-off-by` (DCO) to commits |
@@ -154,12 +154,12 @@ the last backup is uncommitted drift and would be wiped.
 
 ## Security notes
 
-- The token lives in the add-on options (Supervisor-encrypted), never in git
+- The token lives in the app options (Supervisor-encrypted), never in git
   and never in `.git/config` — it is passed per network call only, so other
-  add-ons with config access and HA full backups never see it.
+  apps with config access and HA full backups never see it.
 - `secrets.yaml` **and any copy of it** (`secrets.yaml.bak-*`, `*.orig`,
   `*.bak`, `zigbee2mqtt/secret.yaml`), `.storage/`, `.cloud/`, keys/tokens,
-  databases, logs, and the add-on's own status/log files are excluded on
+  databases, logs, and the app's own status/log files are excluded on
   every run via `.git/info/exclude` — not just the seeded `.gitignore` — and
   anything a previous run already committed is untracked automatically.
   (Committing status files creates a PR-per-day feedback loop — learned the
@@ -167,11 +167,11 @@ the last backup is uncommitted drift and would be wiped.
 - While a backup PR is open, new drift is pushed onto that same PR instead of
   opening another one each day.
 - CI validates with **stub** secrets; your real `secrets.yaml` never leaves the box.
-- Nothing in this add-on ever force-pushes or writes to your base branch after
+- Nothing in this app ever force-pushes or writes to your base branch after
   the initial bootstrap import.
 - **This is change tracking, not disaster recovery** — pair it with HA's
-  native encrypted backups + the Google Drive Backup add-on for full system
-  state (`secrets.yaml`, `.storage/`, databases, add-ons). See the add-on
+  native encrypted backups + the Google Drive Backup app for full system
+  state (`secrets.yaml`, `.storage/`, databases, apps). See the app
   DOCS for the full "what is backed up where" table and where secrets belong.
 
 ## License

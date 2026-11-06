@@ -21,7 +21,7 @@ configuration:
     description: Hours between backup runs.
   run_at_start:
     name: Run at start
-    description: Also run a backup when the add-on starts.
+    description: Also run a backup when the app starts.
   dry_run:
     name: Dry run
     description: Log what would change without pushing anything.

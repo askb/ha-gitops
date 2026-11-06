@@ -36,7 +36,7 @@ APPLY_AFTER_PULL="$(opt .apply_after_pull)"
 [ "$APPLY_AFTER_PULL" = "null" ] && APPLY_AFTER_PULL="reload"
 
 # Token-less remote: the token is never written to .git/config (readable by
-# every add-on with config access and captured in HA full backups). Each
+# every app with config access and captured in HA full backups). Each
 # network call gets it via a one-shot http.extraheader instead (see gh()).
 REMOTE_URL="https://github.com/${GITHUB_REPO}.git"
 API="${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPO}"
@@ -126,7 +126,7 @@ OZW_Log.txt
 .uuid
 .ha_run.lock
 
-# This addon's runtime metadata (committing it creates a PR feedback loop)
+# This app's runtime metadata (committing it creates a PR feedback loop)
 .gitops_backup_status
 gitops_backup.log
 
@@ -140,7 +140,7 @@ EOF
 }
 
 never_commit_patterns() {
-    # Secrets, credentials, and the addon's own runtime metadata — must never be
+    # Secrets, credentials, and the app's own runtime metadata — must never be
     # committed. Shared by the exclude writer and the untracker. Backup/editor
     # copies of secrets.yaml (`secrets.yaml.bak-2026…`, `*.orig`) are the most
     # common way a real secret slips into a PR, so they are covered too.
@@ -171,7 +171,7 @@ EOF
 
 write_secret_excludes() {
     # Write the never-commit patterns to .git/info/exclude (git's local,
-    # un-shared ignore) so secrets/credentials + addon metadata stay out of
+    # un-shared ignore) so secrets/credentials + app metadata stay out of
     # backups even when migrating a repo that already has its own .gitignore
     # (seed_gitignore only writes one for a fresh repo). Called before the stash
     # so untracked secrets are never swept in. Idempotent: replace our block.
@@ -212,7 +212,7 @@ bootstrap_if_needed() {
     # Returns 0 if bootstrap ran (caller should stop), 1 if repo already exists
     if [ -d .git ]; then return 1; fi
     log "No git repo in ${CONFIG_DIR} — bootstrapping"
-    log "⚠ This add-on versions DECLARATIVE config only. It does NOT back up secrets.yaml, .storage/ (UI-configured integrations, logins, device/entity registries, dashboards), the database, or add-on data — those are excluded on purpose. For a 100% restore you MUST also run HA full backups (e.g. the Google Drive Backup add-on). See this add-on's DOCS → 'What is backed up where'."
+    log "⚠ This app versions DECLARATIVE config only. It does NOT back up secrets.yaml, .storage/ (UI-configured integrations, logins, device/entity registries, dashboards), the database, or app data — those are excluded on purpose. For a 100% restore you MUST also run HA full backups (e.g. the Google Drive Backup app). See this app's DOCS → 'What is backed up where'."
     if [ "$DRY_RUN" = "true" ]; then
         seed_gitignore
         log "DRY RUN: would git init, commit initial import, push to ${BASE_BRANCH}"
@@ -240,7 +240,7 @@ create_pull_request() {
 }
 
 find_open_backup_pr() {
-    # Branch name of the newest open PR from this add-on (head = owner:prefix/*),
+    # Branch name of the newest open PR from this app (head = owner:prefix/*),
     # or empty when there is none / the API is unreachable (→ open a new PR).
     api_call GET "/pulls?state=open&base=${BASE_BRANCH}&sort=created&direction=desc&per_page=100" 2>/dev/null \
         | jq -r --arg p "${BRANCH_PREFIX}/" --arg o "${GITHUB_REPO%%/*}" \
@@ -406,7 +406,7 @@ Signed-off-by: ${COMMIT_NAME} <${COMMIT_EMAIL}>"
     local pr_url
     if pr_url=$(create_pull_request "$branch_name" \
         "chore: auto backup $(date '+%Y-%m-%d %H:%M')" \
-        "Automated Home Assistant config backup — ${changed_count} changed file(s). Opened by the GitOps Config Backup addon; review and merge.
+        "Automated Home Assistant config backup — ${changed_count} changed file(s). Opened by the GitOps Config Backup app; review and merge.
 
 ${files}") \
         && [ -n "$pr_url" ]; then
