@@ -174,6 +174,16 @@ the last backup is uncommitted drift and would be wiped.
   state (`secrets.yaml`, `.storage/`, databases, apps). See the app
   DOCS for the full "what is backed up where" table and where secrets belong.
 
+## Contributing
+
+Lint locally with the same checks CI runs:
+
+```bash
+pip install pre-commit && pre-commit install   # once
+pre-commit run --all-files
+bash tests/self_check.sh
+```
+
 ## License
 
 Apache-2.0
