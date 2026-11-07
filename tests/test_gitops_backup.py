@@ -187,6 +187,77 @@ def test_new_dir_with_secret_counts_files_and_skips_key(env: dict[str, str], git
     assert "esphome/garden.yaml" in tracked and "key.bin" not in tracked and "secrets" not in tracked
 
 
+def test_base_advanced_under_open_pr_gets_merge_parent(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    Path(env["CONFIG_DIR"], "automations.yaml").write_text("[]\n")
+    run(env)
+    branch = github.created[0]["head"]
+    github.open_prs = [{"head": {"ref": branch, "repo": {"owner": {"login": "local"}}}}]
+
+    # someone merges something else to main upstream
+    up = Path(env["HOME"], "upstream")
+    subprocess.run(
+        ["git", "clone", "-q", "-b", "main", str(Path(env["HOME"], "origin.git")), str(up)],
+        env=env,
+        check=True,
+    )
+    (up / "upstream.yaml").write_text("x: 1\n")
+    for args in (
+        ["add", "-A"],
+        ["-c", "user.name=U", "-c", "user.email=u@l", "commit", "-qm", "up"],
+        ["push", "-q"],
+    ):
+        subprocess.run(["git", "-C", str(up), *args], env=env, check=True)
+
+    Path(env["CONFIG_DIR"], "scripts.yaml").write_text("{}\n")
+    assert run(env) == 0 and status(env) == f"success:pr_updated:{branch}"
+    parents = git(env, "log", "-1", "--format=%P", branch).split()
+    assert len(parents) == 2, "stacked commit must merge the advanced base so the PR stays mergeable"
+    assert Path(env["CONFIG_DIR"], "upstream.yaml").exists(), "upstream change pulled to the box"
+    assert "upstream.yaml" in git(env, "ls-tree", "-r", "--name-only", branch)
+
+
+def test_dry_run_reports_without_pushing(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    write_options(env, dry_run=True)
+    Path(env["CONFIG_DIR"], "automations.yaml").write_text("[]\n")
+    assert run(env) == 0 and status(env) == "success:dry_run:1 files"
+    assert github.created == []
+    assert git(env, "branch", "--list", "auto-backup/*") == ""
+    assert "DRY RUN: 1 changed file(s)" in Path(env["CONFIG_DIR"], "gitops_backup.log").read_text()
+
+
+def test_malformed_pr_list_is_tolerated(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    github.open_prs = [{"head": None}, {"nope": 1}, {"head": {"ref": "x"}}]
+    Path(env["CONFIG_DIR"], "automations.yaml").write_text("[]\n")
+    assert run(env) == 0 and status(env).startswith("success:pr_created:")
+
+
+def test_unreachable_origin_exits_nonzero(env: dict[str, str]) -> None:
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--global",
+            "url.https://github.com/local/test.git.insteadOf",
+            "https://github.com/local/test.git",
+        ],
+        env=env,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "--global", "--unset", f"url.{env['HOME']}/origin.git.insteadOf"],
+        env=env,
+        check=True,
+    )
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    proc = subprocess.run([sys.executable, str(APP)], env=env, capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "failed" in proc.stderr
+    assert "test-token" not in proc.stderr + proc.stdout, "token must never be echoed"
+
+
 def test_foreign_open_pr_is_ignored(env: dict[str, str], github: FakeGitHub) -> None:
     run(env)
     github.open_prs = [{"head": {"ref": "auto-backup/x", "repo": {"owner": {"login": "someone-else"}}}}]
