@@ -67,7 +67,7 @@ Run both layers:
 | Config YAML (automations, dashboards, …) | ✅ versioned, reviewable diffs | ✅ inside the archive |
 | `secrets.yaml` | ❌ **never** (gitignored) | ✅ inside the **encrypted** archive |
 | `.storage/` — UI-added **integrations**, **logins/tokens**, **device/entity/area registries**, **UI (Lovelace) dashboards**, helpers | ❌ never (holds secrets) | ✅ **most restore-critical item** |
-| Credentials: `*.token`, `.google.token`, `*.key`, `*.pem`, `.cloud/` | ❌ never | ✅ |
+| Credentials: `*.token`, `.google.token`, `*.key`, `*.pem`, `*-key.bin`, `esphome/.device-builder*`, `.cloud/` | ❌ never | ✅ |
 | Databases, history, logs | ❌ never | ✅ (recorder DB, if selected) |
 | App configs/data, TLS certs (`/ssl`) — live **outside** `/config` | ❌ app can't see them | ✅ |
 | Media, camera recordings | ❌ | usually excluded — external drive |
@@ -126,7 +126,8 @@ Everything in your config folder **except** the seeded `.gitignore` exclusions:
 `secrets.yaml` and any copy of it (`secrets.yaml.*` except
 `.example/.sample/.template/.dist`, `*.bak`, `*.bak-*`, `*.bak.*`,
 `*.orig`, `*.secret`, `zigbee2mqtt/secret.yaml`), `.storage/`, `.cloud/`,
-databases, logs, `*.key`, `*.pem`, `*.token`, `.google.token`,
+databases, logs, `*.key`, `*.pem`, `*-key.bin`, `*.token`, `.google.token`,
+`esphome/.device-builder*` (ESPHome Device Builder peer key/state),
 `known_devices.yaml`, `ip_bans.yaml`, and the app's own status/log files.
 The secret patterns are also enforced through `.git/info/exclude` on every
 run, so they hold for migrated repos with their own `.gitignore` too.

@@ -145,6 +145,7 @@ def test_drift_opens_pr(env: dict[str, str], github: FakeGitHub) -> None:
     (pr,) = github.created
     assert pr["base"] == "main" and pr["head"].startswith("auto-backup/")
     assert "- A automations.yaml" in pr["body"]
+    assert "— 1 changed file(s)" in pr["body"]
     assert git(env, "branch", "--show-current") == "main", "HEAD must stay on base"
     assert "Signed-off-by: Test <test@localhost>" in git(env, "log", "-1", "--format=%B", pr["head"])
 
@@ -164,6 +165,26 @@ def test_open_pr_is_reused_not_duplicated(env: dict[str, str], github: FakeGitHu
     assert run(env) == 0 and status(env) == f"success:pr_updated:{branch}"
     assert len(github.created) == 1
     assert git(env, "rev-list", "--count", f"main..{branch}") == "2"
+
+
+def test_new_dir_with_secret_counts_files_and_skips_key(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    d = Path(env["CONFIG_DIR"], "esphome")
+    d.mkdir()
+    (d / "garden.yaml").write_text("esphome: {}\n")
+    (d / "secrets.yaml").write_text("wifi: hunter2\n")
+    (d / ".device-builder-peer-link-key.bin").write_bytes(b"\0" * 32)
+    (d / ".device-builder.json").write_text("{}\n")
+    (d / "other.yaml").write_text("{}\n")
+
+    assert run(env) == 0 and status(env).startswith("success:pr_created:")
+    (pr,) = github.created
+    assert "— 2 changed file(s)" in pr["body"], "untracked dirs must be counted per file"
+    assert "garden.yaml" in pr["body"] and "other.yaml" in pr["body"]
+    for leaked in ("secrets.yaml", "peer-link-key", ".device-builder.json"):
+        assert leaked not in pr["body"]
+    tracked = git(env, "ls-tree", "-r", "--name-only", pr["head"])
+    assert "esphome/garden.yaml" in tracked and "key.bin" not in tracked and "secrets" not in tracked
 
 
 def test_foreign_open_pr_is_ignored(env: dict[str, str], github: FakeGitHub) -> None:

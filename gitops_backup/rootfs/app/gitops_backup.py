@@ -50,6 +50,8 @@ secrets.yaml.*
 *.key
 *.pem
 *.token
+*-key.bin
+esphome/.device-builder*
 .google.token
 .git-credentials
 .cloud/
@@ -75,6 +77,8 @@ secrets.yaml.*
 *.pem
 *.key
 *.token
+*-key.bin
+esphome/.device-builder*
 .google.token
 .git-credentials
 .cloud/
@@ -454,7 +458,7 @@ class Backup:
         self.untrack_secrets()
 
         # 4. Anything to back up?
-        porcelain = self.out("status", "--porcelain")
+        porcelain = self.out("status", "--porcelain", "-uall")
         if not porcelain:
             self.write_status("success", "no_changes", "")
             self.log("No changes to back up")
