@@ -3,10 +3,10 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-RUN apk add --no-cache git curl jq bash
+RUN apk add --no-cache git bash python3
 
 COPY rootfs /
-RUN chmod a+x /app/gitops_backup.sh /etc/services.d/gitops/run
+RUN chmod a+x /app/gitops_backup.py /etc/services.d/gitops/run
 
 LABEL \
   io.hass.type="addon" \

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Anil Belur
+[project]
+name = "ha-gitops"
+version = "0.5.0"
+description = "PR-gated GitHub backup for Home Assistant config (HA app)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "mypy>=1.13"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+include = ["gitops_backup/rootfs/app/*.py", "tests/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N", "W"]
+ignore = ["S603", "S607"]  # subprocess with fixed argv (git) is the whole point
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["gitops_backup/rootfs/app/gitops_backup.py"]

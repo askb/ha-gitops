@@ -48,6 +48,24 @@ jobs:
       - name: Run self-check
         run: bash tests/self_check.sh
 
+  python:
+    name: Python Lint & Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          python-version: "3.12"
+      - name: ruff
+        run: uvx ruff check . && uvx ruff format --check .
+      - name: mypy
+        run: uvx mypy
+      - name: pytest
+        run: uv run --no-project --with pytest pytest -p no:anyio
+
   addon-lint:
     name: Add-on Lint
     runs-on: ubuntu-latest
@@ -77,4 +95,4 @@ jobs:
       - name: Smoke — binaries present
         run: |
           docker run --rm --entrypoint sh gitops-backup:test \
-            -c "command -v git && command -v jq && command -v curl && bash -n /app/gitops_backup.sh"
+            -c "command -v git && python3 -m py_compile /app/gitops_backup.py"

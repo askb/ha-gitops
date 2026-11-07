@@ -12,10 +12,10 @@ bashio::log.info "GitOps Config Backup starting (every ${INTERVAL_HOURS}h)"
 
 if bashio::var.true "${RUN_AT_START}"; then
     bashio::log.info "run_at_start enabled — running first backup now"
-    bash /app/gitops_backup.sh || bashio::log.warning "Backup run failed (see log in config dir)"
+    python3 /app/gitops_backup.py || bashio::log.warning "Backup run failed (see log in config dir)"
 fi
 
 while true; do
     sleep "$((INTERVAL_HOURS * 3600))"
-    bash /app/gitops_backup.sh || bashio::log.warning "Backup run failed (see log in config dir)"
+    python3 /app/gitops_backup.py || bashio::log.warning "Backup run failed (see log in config dir)"
 done

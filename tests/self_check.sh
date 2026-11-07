@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Anil Belur
 ##############################################################################
-# Self-check for gitops_backup.sh — runs entirely locally (no GitHub calls):
+# Self-check for gitops_backup.py — runs entirely locally (no GitHub calls):
 #   1. bootstrap dry-run seeds .gitignore and reports status
 #   2. real bootstrap pushes the initial import to a local bare "origin"
 #   3. drift on a later run produces a backup branch (PR call fails soft,
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="${HERE}/../gitops_backup/rootfs/app/gitops_backup.sh"
+SCRIPT="${HERE}/../gitops_backup/rootfs/app/gitops_backup.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -28,7 +28,7 @@ EOF
 
 run() {
   OPTIONS="$TMP/data/options.json" CONFIG_DIR="$TMP/config" HOME="$TMP" \
-    bash "$SCRIPT" >/dev/null 2>&1 || true
+    python3 "$SCRIPT" >/dev/null 2>&1 || true
 }
 
 status() { cat "$TMP/config/.gitops_backup_status"; }
