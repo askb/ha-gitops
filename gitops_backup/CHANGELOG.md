@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
+- Rewrite: the backup script is now Python (`gitops_backup.py`, stdlib
+  only) instead of bash. Behaviour, options, status file and log format are
+  unchanged; `tests/self_check.sh` (the parity gate) runs unmodified against
+  the new implementation. `jq` and `curl` are no longer installed in the
+  image.
+- Fix (#17): default `commit_email` is now
+  `gitops-backup@users.noreply.github.com` — the old `@localhost` default
+  was rejected by the DCO GitHub App. Existing installs keep whatever value
+  is saved in their options.
+- Dev: `pyproject.toml` with ruff/mypy/pytest; new `tests/test_gitops_backup.py`
+  drives PR creation / de-duplication against a fake GitHub API; ruff
+  pre-commit hooks; new "Python Lint & Tests" CI job.
 - Docs: "add-on" → "app" in all user-facing text, following Home
   Assistant's rename. Platform identifiers (`io.hass.type=addon`, linter
   action, badge URLs, CI job/check names) are unchanged.

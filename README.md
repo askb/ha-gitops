@@ -181,7 +181,8 @@ Lint locally with the same checks CI runs:
 ```bash
 pip install pre-commit && pre-commit install   # once
 pre-commit run --all-files
-bash tests/self_check.sh
+bash tests/self_check.sh                       # bash parity gate
+uv run --no-project --with pytest pytest       # API/PR flow tests
 ```
 
 ## License
