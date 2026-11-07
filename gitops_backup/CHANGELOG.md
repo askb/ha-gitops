@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.1
+
+- Security: exclude `esphome/.device-builder*` (ESPHome Device Builder
+  state incl. the 32-byte `.device-builder-peer-link-key.bin`) and
+  `*-key.bin`. Found on the first 0.5.0 run on a real box: the key landed
+  in a backup PR. Existing installs: the pattern is enforced via
+  `.git/info/exclude` on the next run; a PR already containing the file
+  must be closed by hand.
+- Fix: "N changed file(s)" in the PR body counted an untracked directory
+  as one entry; it now counts files (`git status --porcelain -uall`),
+  matching the listed files.
+
 ## 0.5.0
 
 - Rewrite: the backup script is now Python (`gitops_backup.py`, stdlib
