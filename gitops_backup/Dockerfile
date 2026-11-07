@@ -3,7 +3,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-RUN apk add --no-cache git bash python3
+RUN apk upgrade --no-cache && apk add --no-cache git bash python3
 
 COPY rootfs /
 RUN chmod a+x /app/gitops_backup.py /etc/services.d/gitops/run

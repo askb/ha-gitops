@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2
+
+- Image: base bumped to Home Assistant base `3.24` (Alpine 3.24) and
+  `apk upgrade` runs at build time, so published images carry current
+  Alpine security fixes. No functional change.
+- CI: harden-runner on every job, Trivy image scan (CRITICAL/HIGH,
+  fixed-only) gates the build, zizmor + CodeQL + Scorecard workflows,
+  Dependabot for action pins. See `SECURITY.md`.
+
 ## 0.5.1
 
 - Security: exclude `esphome/.device-builder*` (ESPHome Device Builder
