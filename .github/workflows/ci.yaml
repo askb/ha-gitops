@@ -112,7 +112,7 @@ jobs:
       - name: Build app image
         run: |
           docker build \
-            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21 \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
             -t gitops-backup:test ./gitops_backup
       - name: Smoke — binaries present
         run: |
@@ -125,3 +125,5 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+          # tempio ships in the HA base image; not ours to patch.
+          skip-files: /usr/bin/tempio
