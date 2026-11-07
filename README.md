@@ -169,6 +169,13 @@ the last backup is uncommitted drift and would be wiped.
 - CI validates with **stub** secrets; your real `secrets.yaml` never leaves the box.
 - Nothing in this app ever force-pushes or writes to your base branch after
   the initial bootstrap import.
+- Supply chain: every CI job runs under
+  [harden-runner](https://github.com/step-security/harden-runner) (egress
+  audit), all actions are SHA-pinned (Dependabot keeps them current),
+  workflows are audited by [zizmor](https://docs.zizmor.sh) on every PR,
+  the Python and workflow code by CodeQL, the built image by Trivy
+  (CRITICAL/HIGH, fixed only), and the repo by OpenSSF Scorecard weekly.
+  Report vulnerabilities per [SECURITY.md](SECURITY.md).
 - **This is change tracking, not disaster recovery** — pair it with HA's
   native encrypted backups + the Google Drive Backup app for full system
   state (`secrets.yaml`, `.storage/`, databases, apps). See the app
@@ -183,7 +190,14 @@ pip install pre-commit && pre-commit install   # once
 pre-commit run --all-files
 bash tests/self_check.sh                       # bash parity gate
 uv run --no-project --with pytest pytest       # API/PR flow tests
+uvx zizmor --persona pedantic .github/workflows # workflow audit
 ```
+
+The backup logic is one stdlib-only Python file
+(`gitops_backup/rootfs/app/gitops_backup.py`); `tests/self_check.sh` is the
+behavioural contract (bootstrap, drift, upstream sync, conflict recovery,
+secrets hygiene) and `tests/test_gitops_backup.py` covers the GitHub PR
+paths against a fake API. Both must pass before a release.
 
 ## License
 

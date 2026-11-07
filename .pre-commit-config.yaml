@@ -39,6 +39,12 @@ repos:
       - id: check-github-workflows
         args: [--verbose]
 
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.32.0
+    hooks:
+      - id: zizmor
+        args: [--persona=pedantic]
+
   - repo: https://github.com/codespell-project/codespell
     rev: v2.3.0
     hooks:
