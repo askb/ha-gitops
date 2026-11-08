@@ -437,10 +437,12 @@ class Backup:
                 continue
             if b"\0" in data[:8000]:
                 continue  # binary; path patterns cover key blobs
-            hit = next((name for name, rx in SECRET_CONTENT_PATTERNS if rx.search(data)), None)
-            if hit is None:
+            rule_idx = next((i for i, (_, rx) in enumerate(SECRET_CONTENT_PATTERNS) if rx.search(data)), -1)
+            if rule_idx < 0:
                 continue
-            self.log(f"⚠ Secret-like content ({hit}) in {rel} — held back from backup")
+            # Only the rule *label* and path are logged — never the match.
+            label = SECRET_CONTENT_PATTERNS[rule_idx][0]
+            self.log(f"⚠ Secret-like content ({label}) in {rel} — held back from backup")
             self.git("reset", "-q", "--", rel)
             held.append(rel)
         return held
