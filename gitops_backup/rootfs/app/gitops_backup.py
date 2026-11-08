@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -60,6 +61,28 @@ zigbee2mqtt/secret.yaml
 .gitops_backup_status
 gitops_backup.log
 """
+
+# Content-level backstop for secrets living in files the path patterns above
+# do not catch (an inline `password: hunter2`, a pasted PEM block, a GitHub
+# PAT in a shell script…). Files matching are left out of the backup commit.
+CREDENTIAL_DETECTION_RULES: tuple[tuple[str, re.Pattern[bytes]], ...] = (
+    ("private key block", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("GitHub token", re.compile(rb"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b")),
+    ("GitHub fine-grained PAT", re.compile(rb"\bgithub_pat_[A-Za-z0-9_]{80,}\b")),
+    ("AWS access key", re.compile(rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    ("Slack token", re.compile(rb"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
+    ("Google API key", re.compile(rb"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("JWT / HA token", re.compile(rb"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    (
+        "inline credential",
+        # key: literal — skips HA `!secret name`, templates, env refs, and
+        # placeholders. Only plain literals of 8+ chars trip it.
+        re.compile(
+            rb"(?im)^\s*[\"']?(?:password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|bearer)[\"']?\s*[:=]\s*[\"']?(?!!secret\b|\{\{|\$\{?[A-Z_]|<|changeme|your[_-]|example|redacted|xxx|\*\*\*)[^\s\"'#]{8,}"
+        ),
+    ),
+)
+CONTENT_SCAN_MAX_BYTES = 1_000_000
 
 SEED_GITIGNORE = """\
 # Secrets and credentials — never commit
@@ -395,6 +418,37 @@ class Backup:
             lines.append(f"- … and {len(rows) - PR_FILE_LIST_LIMIT} more")
         return "\n".join(lines)
 
+    def scan_staged_for_secrets(self) -> list[str]:
+        """Unstage staged files whose *content* looks like a secret.
+
+        Returns the paths held back. Path-based exclusion (NEVER_COMMIT_PATTERNS)
+        runs first; this catches what it cannot know about — a PEM pasted into
+        a shell script, an inline `password:` literal, a token in a YAML file.
+        """
+        held: list[str] = []
+        staged = self.out("diff", "--cached", "--name-only", "--diff-filter=AM", "-z")
+        for rel in filter(None, staged.split("\0")):
+            path = self.cfg.config_dir / rel
+            try:
+                if path.stat().st_size > CONTENT_SCAN_MAX_BYTES:
+                    continue
+                data = path.read_bytes()
+            except OSError:
+                continue
+            if b"\0" in data[:8000]:
+                continue  # binary; path patterns cover key blobs
+            rule_idx = next(
+                (i for i, (_, rx) in enumerate(CREDENTIAL_DETECTION_RULES) if rx.search(data)), -1
+            )
+            if rule_idx < 0:
+                continue
+            # Only the rule *label* and path are logged — never the match.
+            label = CREDENTIAL_DETECTION_RULES[rule_idx][0]
+            self.log(f"⚠ Secret-like content ({label}) in {rel} — held back from backup")
+            self.git("reset", "-q", "--", rel)
+            held.append(rel)
+        return held
+
     # -- main flow ------------------------------------------------------
 
     def run(self) -> int:
@@ -477,8 +531,17 @@ class Backup:
         # open, stack the new drift onto it instead of opening a near-identical
         # PR every run.
         self.git("add", "-A")
+        held = self.scan_staged_for_secrets()
+        changed_count -= len(held)
+        if not self.out("diff", "--cached", "--name-only"):
+            self.write_status("warning", "secrets_held", ",".join(held))
+            self.log("Nothing left to back up after holding back secret-like files")
+            return 0
         tree = self.out("write-tree")
         files = self.pr_file_list()
+        if held:
+            files += "\n\n⚠ Held back (secret-like content — fix with `!secret` or add to .gitignore):\n"
+            files += "\n".join(f"- {h}" for h in held)
         stamp = f"{datetime.now():%Y-%m-%d %H:%M}"
         msg = f"chore: auto backup {stamp} ({changed_count} files)\n\n{files}"
         if cfg.signoff:

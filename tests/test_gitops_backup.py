@@ -297,3 +297,36 @@ def test_api_url_scheme_is_enforced(tmp_path: Path) -> None:
             commit_name="n", commit_email="e", signoff=False, apply_after_pull="off",
             config_dir=tmp_path, api_url="file:///etc",
         )  # fmt: skip
+
+
+def test_secret_content_held_back_clean_files_ship(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    cfg = Path(env["CONFIG_DIR"])
+    (cfg / "clean.yaml").write_text("mqtt:\n  password: !secret mqtt_pw\n  user: '{{ states.x }}'\n")
+    (cfg / "leaky.yaml").write_text("rest:\n  api_key: sk_live_0123456789abcdef\n")
+    (cfg / "deploy.sh").write_text("#!/bin/sh\nexport GH=ghp_" + "A" * 36 + "\n")
+    pem_header = (
+        "-----BEGIN RSA " + "PRIVATE KEY-----"
+    )  # split so pre-commit's detect-private-key ignores this file
+    (cfg / "cert.yaml").write_text(f"tls: |\n  {pem_header}\n  MIIE\n")
+
+    assert run(env) == 0 and status(env).startswith("success:pr_created:")
+    (pr,) = github.created
+    assert "— 1 changed file(s)" in pr["body"]
+    assert "Held back" in pr["body"]
+    for held in ("leaky.yaml", "deploy.sh", "cert.yaml"):
+        assert f"- {held}" in pr["body"]
+    tracked = git(env, "ls-tree", "-r", "--name-only", pr["head"])
+    assert "clean.yaml" in tracked
+    assert not any(h in tracked for h in ("leaky", "deploy", "cert"))
+    assert "sk_live" not in pr["body"] and "ghp_" not in pr["body"]
+    # still present in the live config — the tool never deletes user files
+    assert (cfg / "leaky.yaml").exists()
+
+
+def test_only_secret_files_changed_yields_warning_not_pr(env: dict[str, str], github: FakeGitHub) -> None:
+    run(env)
+    Path(env["CONFIG_DIR"], "token.yaml").write_text("x:\n  access_token: abcdefghijklmnop\n")
+    assert run(env) == 0
+    assert status(env) == "warning:secrets_held:token.yaml"
+    assert github.created == []

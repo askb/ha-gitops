@@ -2,6 +2,11 @@
 
 ## 0.5.2
 
+- Security: staged files are scanned for secret-like **content** (private
+  key blocks, GitHub/AWS/Slack/Google tokens, JWTs, inline
+  `password: literal`) and held back from the backup commit; held files are
+  listed in the PR body, and a run with only such files ends
+  `warning:secrets_held`. Complements the path-based exclusions.
 - Image: base bumped to Home Assistant base `3.24` (Alpine 3.24) and
   `apk upgrade` runs at build time, so published images carry current
   Alpine security fixes. No functional change.

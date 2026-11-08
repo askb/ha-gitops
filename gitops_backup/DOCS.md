@@ -132,6 +132,19 @@ databases, logs, `*.key`, `*.pem`, `*-key.bin`, `*.token`, `.google.token`,
 The secret patterns are also enforced through `.git/info/exclude` on every
 run, so they hold for migrated repos with their own `.gitignore` too.
 
+### Content scan (secret backstop)
+
+Path rules cannot know about a token pasted into a shell script or a
+`password: hunter2` literal in a YAML file, so every staged text file is
+also scanned for secret-looking **content** before the commit is built:
+private-key blocks, GitHub/AWS/Slack/Google tokens, JWTs (HA long-lived
+tokens), and `password|api_key|*_token|*_secret: <literal>` lines. A file
+that trips a rule is **held back** from that backup (never deleted from
+`/config`) and listed in the PR body under "Held back"; fix it with
+`!secret` and it ships on the next run. If *only* such files changed the
+status is `warning:secrets_held:<files>`. `!secret x`, `{{ templates }}`,
+`${ENV}` and placeholder values are not matched.
+
 ## Backup PRs
 
 One open backup PR at a time: if the previous PR has not been merged yet,
