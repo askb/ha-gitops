@@ -65,7 +65,7 @@ gitops_backup.log
 # Content-level backstop for secrets living in files the path patterns above
 # do not catch (an inline `password: hunter2`, a pasted PEM block, a GitHub
 # PAT in a shell script…). Files matching are left out of the backup commit.
-SECRET_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
+CREDENTIAL_DETECTION_RULES: tuple[tuple[str, re.Pattern[bytes]], ...] = (
     ("private key block", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("GitHub token", re.compile(rb"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b")),
     ("GitHub fine-grained PAT", re.compile(rb"\bgithub_pat_[A-Za-z0-9_]{80,}\b")),
@@ -82,7 +82,7 @@ SECRET_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
         ),
     ),
 )
-SECRET_SCAN_MAX_BYTES = 1_000_000
+CONTENT_SCAN_MAX_BYTES = 1_000_000
 
 SEED_GITIGNORE = """\
 # Secrets and credentials — never commit
@@ -430,18 +430,20 @@ class Backup:
         for rel in filter(None, staged.split("\0")):
             path = self.cfg.config_dir / rel
             try:
-                if path.stat().st_size > SECRET_SCAN_MAX_BYTES:
+                if path.stat().st_size > CONTENT_SCAN_MAX_BYTES:
                     continue
                 data = path.read_bytes()
             except OSError:
                 continue
             if b"\0" in data[:8000]:
                 continue  # binary; path patterns cover key blobs
-            rule_idx = next((i for i, (_, rx) in enumerate(SECRET_CONTENT_PATTERNS) if rx.search(data)), -1)
+            rule_idx = next(
+                (i for i, (_, rx) in enumerate(CREDENTIAL_DETECTION_RULES) if rx.search(data)), -1
+            )
             if rule_idx < 0:
                 continue
             # Only the rule *label* and path are logged — never the match.
-            label = SECRET_CONTENT_PATTERNS[rule_idx][0]
+            label = CREDENTIAL_DETECTION_RULES[rule_idx][0]
             self.log(f"⚠ Secret-like content ({label}) in {rel} — held back from backup")
             self.git("reset", "-q", "--", rel)
             held.append(rel)
