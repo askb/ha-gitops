@@ -14,6 +14,8 @@
   `success:no_changes:`.
 - Docs: UI-managed dashboards are out of scope, and `interval_hours`
   bounds how long a merged PR takes to reach Home Assistant.
+- Docs: checklist for verifying the full-backup layer (encryption,
+  failed uploads, archive size, duplicate jobs).
 
 ## 0.5.2
 

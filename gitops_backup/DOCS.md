@@ -101,6 +101,33 @@ Password manager          → the three keys to the kingdom (below)
 - CI validates PRs with **stub** secrets (step 4) — real values never leave
   the box.
 
+### Check that the full backup really works
+
+This app only covers the config. Everything else depends on the second
+layer, and it can fail without telling you. Found on a real box, where
+every off-site upload had been failing for days:
+
+- **Is it encrypted?** The Google Drive Backup app only encrypts its own
+  backups if you set a backup password in its settings. An unencrypted
+  archive holds `secrets.yaml` in clear text.
+- **Did the last upload succeed?** A full Drive quota is only reported in
+  that app's log ("Google Drive is out of space"). Local backups keep
+  being created, so nothing looks wrong in Home Assistant.
+- **How big is one archive?** Anything under `/config` rides along in
+  every backup, and so does each app's own data. Camera snapshots saved to
+  `/config/www/` and audio clips kept in an app's config folder had grown
+  one archive to 15 GB. Prune such folders on a schedule or move them to
+  `/media`, and the same backup is under 1 GB.
+- **Is only one job running?** Home Assistant's automatic backup and the
+  Google Drive Backup app can both create a nightly archive. Keep one.
+- **Supervisor's "no current backup" notice** only counts a backup of type
+  *full*, which includes `/media`. A daily partial backup of everything
+  except media never clears it; that is expected.
+
+Large media under `/config/www/` is also not excluded from git by the
+seeded `.gitignore`. Run with `dry_run: true` first and add such folders
+to `.gitignore` before going live.
+
 **Disaster recovery order:** reinstall HAOS → restore the encrypted HA backup
 (brings back `secrets.yaml`, `.storage`, apps) → your config repo is then
 already live on the box and git history simply resumes.
