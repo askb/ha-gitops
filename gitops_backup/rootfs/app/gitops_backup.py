@@ -20,14 +20,18 @@ import base64
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 MAX_LOG_LINES = 200
 PR_FILE_LIST_LIMIT = 50
@@ -151,6 +155,7 @@ class Config:
     apply_after_pull: str
     config_dir: Path
     api_url: str
+    supervisor_url: str = "http://supervisor"
 
     @classmethod
     def load(cls, options_path: Path, config_dir: Path) -> Config:
@@ -167,11 +172,14 @@ class Config:
             apply_after_pull=opts.get("apply_after_pull") or "reload",
             config_dir=config_dir,
             api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+            supervisor_url=os.environ.get("SUPERVISOR_URL", "http://supervisor"),
         )
 
     def __post_init__(self) -> None:
         if not self.api_url.startswith(("https://", "http://")):
             raise ValueError(f"GITHUB_API_URL must be http(s): {self.api_url!r}")
+        if not self.supervisor_url.startswith("http://"):
+            raise ValueError(f"SUPERVISOR_URL must be http: {self.supervisor_url!r}")
 
     @property
     def remote_url(self) -> str:
@@ -188,6 +196,83 @@ class Config:
     @property
     def status_file(self) -> Path:
         return self.config_dir / ".gitops_backup_status"
+
+
+class HAWebSocket:
+    """Just enough RFC 6455 to call Home Assistant's WebSocket API.
+
+    ponytail: plain http, no extensions, client frames under 64 KiB, and the
+    accept key is not verified (fixed Supervisor-internal host). Swap for a
+    real client library if this ever talks to anything else.
+    """
+
+    def __init__(self, url: str, timeout: float = 30) -> None:
+        u = urllib.parse.urlsplit(url)
+        self._sock = socket.create_connection((u.hostname or "", u.port or 80), timeout=timeout)
+        self._rfile = self._sock.makefile("rb")
+        key = base64.b64encode(os.urandom(16)).decode()
+        self._sock.sendall(
+            f"GET {u.path} HTTP/1.1\r\nHost: {u.netloc}\r\nUpgrade: websocket\r\n"
+            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n".encode()
+        )
+        status = self._rfile.readline()
+        if b" 101 " not in status:
+            raise OSError(f"WebSocket upgrade refused: {status!r}")
+        while self._rfile.readline() not in (b"\r\n", b""):
+            pass
+
+    def close(self) -> None:
+        self._rfile.close()
+        self._sock.close()
+
+    def _read(self, n: int) -> bytes:
+        data = self._rfile.read(n)
+        if len(data) != n:
+            raise OSError("WebSocket connection lost")
+        return data
+
+    def _frame(self, opcode: int, payload: bytes) -> None:
+        n = len(payload)
+        size = bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + n.to_bytes(2, "big")
+        mask = os.urandom(4)
+        self._sock.sendall(
+            bytes([0x80 | opcode]) + size + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        )
+
+    def send(self, msg: dict[str, Any]) -> None:
+        self._frame(0x1, json.dumps(msg).encode())
+
+    def recv(self) -> dict[str, Any]:
+        """Next JSON message; answers pings and joins fragmented frames."""
+        data = b""
+        while True:
+            head = self._read(2)
+            n = head[1] & 0x7F
+            if n == 126:
+                n = int.from_bytes(self._read(2), "big")
+            elif n == 127:
+                n = int.from_bytes(self._read(8), "big")
+            payload = self._read(n)
+            opcode = head[0] & 0x0F
+            if opcode == 0x8:
+                raise OSError("WebSocket closed by Home Assistant")
+            if opcode == 0x9:
+                self._frame(0xA, payload)
+            elif opcode in (0x0, 0x1):
+                data += payload
+                if head[0] & 0x80:
+                    msg = json.loads(data)
+                    if not isinstance(msg, dict):
+                        raise ValueError("unexpected WebSocket message")
+                    return msg
+
+    def call(self, msg_id: int, **msg: Any) -> Any:
+        """Send a command and return its result (None when HA reports failure)."""
+        self.send({"id": msg_id, **msg})
+        while True:
+            reply = self.recv()
+            if reply.get("id") == msg_id and reply.get("type") == "result":
+                return reply.get("result") if reply.get("success") else None
 
 
 class Backup:
@@ -265,18 +350,44 @@ class Backup:
                 f"⚠ apply_after_pull={mode} but SUPERVISOR_TOKEN unset; skipping — needs homeassistant_api"
             )
             return
-        req = urllib.request.Request(
-            f"http://supervisor/core/api/services/{service}",
+        req = urllib.request.Request(  # noqa: S310 - scheme checked in Config
+            f"{self.cfg.supervisor_url}/core/api/services/{service}",
             method="POST",
             data=b"{}",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=60):  # noqa: S310 - fixed http://supervisor
+            with urllib.request.urlopen(req, timeout=60):  # noqa: S310 - scheme checked in Config
                 pass
             self.log(f"✅ Applied pulled changes: homeassistant.{name}")
         except (urllib.error.URLError, OSError):
             self.log(f"⚠ Failed to call homeassistant.{name}; apply manually in HA")
+
+    def ha_refresh_dashboards(self) -> None:
+        """Make HA tell open browser sessions that YAML dashboards changed.
+
+        HA re-reads a YAML dashboard only when a client asks for it, and only
+        then fires ``lovelace_updated``; ``reload_all`` does not. Without this,
+        a merged dashboard change sits on disk while every open tab keeps
+        showing the old cards.
+        """
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        if not token:
+            return
+        try:
+            with closing(HAWebSocket(f"{self.cfg.supervisor_url}/core/websocket")) as ws:
+                ws.recv()  # auth_required
+                ws.send({"type": "auth", "access_token": token})
+                if ws.recv().get("type") != "auth_ok":
+                    raise OSError("Home Assistant rejected the Supervisor token")
+                dashboards = ws.call(1, type="lovelace/dashboards/list") or []
+                # None is the default dashboard; fetching a storage one is a no-op.
+                paths = [None, *(d["url_path"] for d in dashboards if d.get("mode") == "yaml")]
+                for msg_id, url_path in enumerate(paths, 2):
+                    ws.call(msg_id, type="lovelace/config", url_path=url_path, force=False)
+            self.log(f"✅ Refreshed {len(paths) - 1} YAML dashboard(s) for open browser sessions")
+        except (OSError, ValueError, KeyError, TypeError) as err:
+            self.log(f"⚠ Could not refresh open dashboards ({err}); reload the browser tab instead")
 
     # -- secret hygiene -------------------------------------------------
 
@@ -505,16 +616,22 @@ class Backup:
             self.write_status("warning", "stash_conflict", "kept live config where conflicting")
 
         # 3b. Upstream advanced (a merged PR came down) → apply it to running HA.
+        applied = ""
         if pre_sync != post_sync and not cfg.dry_run:
             self.log(f"Upstream sync: {pre_sync[:7]} → {post_sync[:7]} — applying ({cfg.apply_after_pull})")
             self.ha_apply(cfg.apply_after_pull)
+            pulled = self.out("diff", "--name-only", pre_sync, post_sync).splitlines()
+            # A restart reconnects every browser anyway; "off" means hands off HA.
+            if cfg.apply_after_pull == "reload" and any(f.endswith((".yaml", ".yml")) for f in pulled):
+                self.ha_refresh_dashboards()
+            applied = f"applied {post_sync[:7]}"
 
         self.untrack_secrets()
 
         # 4. Anything to back up?
         porcelain = self.out("status", "--porcelain", "-uall")
         if not porcelain:
-            self.write_status("success", "no_changes", "")
+            self.write_status("success", "no_changes", applied)
             self.log("No changes to back up")
             return 0
         changed_count = len(porcelain.splitlines())

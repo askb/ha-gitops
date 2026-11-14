@@ -81,7 +81,9 @@ git -C "$TMP/merge" -c user.name=T -c user.email=t@localhost \
   merge -q --no-ff -m "Merge backup PR" "origin/$backup"
 git -C "$TMP/merge" push -q origin main
 run
-[ "$(status)" = "success:no_changes:" ] || { echo "FAIL: post-merge status = $(status)"; exit 1; }
+merged="$(git -C "$TMP/merge" rev-parse --short=7 HEAD)"
+[ "$(status)" = "success:no_changes:applied $merged" ] \
+  || { echo "FAIL: post-merge status = $(status)"; exit 1; }
 grep -q "^changed$" "$TMP/config/configuration.yaml" \
   || { echo "FAIL: live config lost after merged-PR sync"; exit 1; }
 [ "$(git -C "$TMP/config" rev-parse HEAD)" = "$(git -C "$TMP/merge" rev-parse HEAD)" ] \

@@ -113,12 +113,26 @@ already live on the box and git history simply resumes.
 | `github_token` | — | Fine-grained PAT (required) |
 | `base_branch` | `main` | Branch PRs target |
 | `branch_prefix` | `auto-backup` | Prefix for backup branches |
-| `interval_hours` | `24` | Hours between runs (1–168) |
+| `interval_hours` | `24` | Hours between runs (1–168). A merged PR is pulled at the next run, so this is also the longest it takes to reach Home Assistant; set `1` if you merge often. |
 | `run_at_start` | `false` | Also run when the app starts |
 | `dry_run` | `false` | Log what would change; push nothing |
 | `commit_name` / `commit_email` | see defaults | Commit author identity. Set a valid (or GitHub noreply) address if the DCO app is enabled on the repo — `Signed-off-by` uses it. |
 | `signoff` | `true` | Add `Signed-off-by` (DCO) to commits |
-| `apply_after_pull` | `reload` | After a merged PR is pulled into `/config`, apply it to the running HA: `reload` calls `homeassistant.reload_all` (automations, scripts, scenes, templates, `input_*`) with no restart; `restart` calls `homeassistant.restart` (use when merged changes touch `configuration.yaml` integrations or `custom_components/`, which are not hot-reloadable); `off` disables it. Only fires when the sync actually advanced `HEAD`, never in `dry_run`. |
+| `apply_after_pull` | `reload` | After a merged PR is pulled into `/config`, apply it to the running HA: `reload` calls `homeassistant.reload_all` (automations, scripts, scenes, templates, `input_*`) and then refreshes YAML dashboards in every open browser session with no restart; `restart` calls `homeassistant.restart` (use when merged changes touch `configuration.yaml` integrations or `custom_components/`, which are not hot-reloadable); `off` disables it. Only fires when the sync actually advanced `HEAD`, never in `dry_run`. |
+
+## Dashboards
+
+YAML-mode dashboards (`lovelace: dashboards:` entries with `mode: yaml`)
+are plain files, so they are backed up and a merged change deploys with no
+restart: after the pull the app asks Home Assistant for each YAML
+dashboard once, which makes it re-read the file and tell every open
+browser session to update.
+
+Dashboards you edit in the UI are **not** covered. Home Assistant keeps
+them in `.storage/`, which is excluded (it also holds tokens and device
+registries), and loads them only at startup. Change those in the UI, or
+convert a dashboard to YAML mode if you want it reviewed and deployed
+through pull requests.
 
 ## What is committed
 
@@ -163,4 +177,5 @@ command_line:
 ```
 
 Values: `success:pr_created:<url>` · `success:no_changes:` ·
+`success:no_changes:applied <sha>` (a merged PR was pulled and applied) ·
 `success:dry_run:<n files>` · `warning:…` · `error:…`
