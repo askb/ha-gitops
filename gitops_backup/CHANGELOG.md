@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3
+
+- Fix: a merged dashboard change now reaches browsers that already have
+  the dashboard open. Home Assistant re-reads a YAML dashboard only when a
+  client asks for it, and `homeassistant.reload_all` does not, so open
+  tabs kept showing the old cards until reloaded by hand. After a pull
+  that changes YAML, the app now fetches each YAML dashboard once over the
+  WebSocket API, which makes Home Assistant notify every open session.
+  Only with `apply_after_pull: reload`; failures are logged, never fatal.
+- Status: a run that pulled and applied a merged PR with nothing to back
+  up now reads `success:no_changes:applied <sha>` instead of a bare
+  `success:no_changes:`.
+- Docs: UI-managed dashboards are out of scope, and `interval_hours`
+  bounds how long a merged PR takes to reach Home Assistant.
+
 ## 0.5.2
 
 - Security: staged files are scanned for secret-like **content** (private

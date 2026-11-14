@@ -8,9 +8,12 @@ secrets hygiene); here we exercise PR creation and de-duplication.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
 import os
+import socketserver
 import subprocess
 import sys
 import threading
@@ -330,3 +333,169 @@ def test_only_secret_files_changed_yields_warning_not_pr(env: dict[str, str], gi
     assert run(env) == 0
     assert status(env) == "warning:secrets_held:token.yaml"
     assert github.created == []
+
+
+# -- applying a merged PR to the running Home Assistant ----------------------
+
+
+class FakeHA(socketserver.ThreadingTCPServer):
+    """Supervisor's Core proxy: the REST service call plus the WebSocket API.
+
+    Like Home Assistant, it only "re-reads" a YAML dashboard when asked for
+    it, so the test can assert exactly which dashboards the app asked for.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _HAHandler)
+        self.url = f"http://127.0.0.1:{self.server_address[1]}"
+        self.services: list[str] = []
+        self.tokens: list[str] = []
+        self.fetched: list[str | None] = []
+        self.pongs = 0
+        self.accept_auth = True
+
+
+class _HAHandler(socketserver.StreamRequestHandler):
+    server: FakeHA
+
+    def handle(self) -> None:
+        request = self.rfile.readline().decode()
+        headers: dict[str, str] = {}
+        while line := self.rfile.readline().decode().strip():
+            key, _, value = line.partition(":")
+            headers[key.lower()] = value.strip()
+        if headers.get("upgrade") == "websocket":
+            self._websocket(headers["sec-websocket-key"])
+            return
+        self.rfile.read(int(headers.get("content-length", "0")))
+        self.server.services.append(request.split()[1])
+        self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n[]")
+
+    def _send(self, payload: bytes, opcode: int = 0x1, fin: bool = True) -> None:
+        n = len(payload)
+        if n < 126:
+            size = bytes([n])
+        elif n < 65536:
+            size = bytes([126]) + n.to_bytes(2, "big")
+        else:
+            size = bytes([127]) + n.to_bytes(8, "big")
+        self.wfile.write(bytes([(0x80 if fin else 0) | opcode]) + size + payload)
+
+    def _recv(self) -> dict[str, Any] | None:
+        head = self.rfile.read(2)
+        if len(head) < 2 or head[0] & 0x0F == 0x8:
+            return None
+        n = head[1] & 0x7F
+        if n == 126:
+            n = int.from_bytes(self.rfile.read(2), "big")
+        mask = self.rfile.read(4)
+        data = bytes(b ^ mask[i % 4] for i, b in enumerate(self.rfile.read(n)))
+        if head[0] & 0x0F == 0xA:
+            self.server.pongs += 1
+            return self._recv()
+        msg: dict[str, Any] = json.loads(data)
+        return msg
+
+    def _websocket(self, key: str) -> None:
+        guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        accept = base64.b64encode(hashlib.sha1((key + guid).encode()).digest()).decode()  # noqa: S324
+        self.wfile.write(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            + f"Sec-WebSocket-Accept: {accept}\r\n\r\n".encode()
+        )
+        self._send(b'{"type": "auth_required"}')
+        auth = self._recv()
+        assert auth is not None
+        self.server.tokens.append(auth["access_token"])
+        if not self.server.accept_auth:
+            self._send(b'{"type": "auth_invalid"}')
+            return
+        self._send(b'{"type": "auth_ok"}')
+        while msg := self._recv():
+            if msg["type"] == "lovelace/dashboards/list":
+                result: object = [
+                    {"url_path": "lovelace-energy", "mode": "yaml"},
+                    {"url_path": "garden", "mode": "storage"},
+                ]
+            else:
+                self.server.fetched.append(msg.get("url_path"))
+                result = {"views": [{"title": "x" * 70000}]}  # > 64 KiB: 64-bit frame length
+            body = json.dumps({"id": msg["id"], "type": "result", "success": True, "result": result}).encode()
+            self._send(b"keepalive", opcode=0x9)  # ping in the middle of the conversation
+            self._send(body[:10], fin=False)  # reply split across two frames
+            self._send(body[10:], opcode=0x0)
+
+
+HA_TOKEN = "t" * 130  # real Supervisor tokens are > 125 bytes: needs the 16-bit frame length
+
+
+@pytest.fixture
+def ha(env: dict[str, str]) -> Any:
+    srv = FakeHA()
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    env["SUPERVISOR_URL"] = srv.url
+    env["SUPERVISOR_TOKEN"] = HA_TOKEN
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+
+
+def merge_upstream(e: dict[str, str], name: str, content: str) -> str:
+    """Land a commit on origin/main the way a merged PR does; returns its short SHA."""
+    up = Path(e["HOME"], "upstream")
+    if not up.exists():
+        origin = str(Path(e["HOME"], "origin.git"))
+        subprocess.run(["git", "clone", "-q", "-b", "main", origin, str(up)], env=e, check=True)
+    (up / name).parent.mkdir(parents=True, exist_ok=True)
+    (up / name).write_text(content)
+    for args in (
+        ["pull", "-q", "--rebase"],
+        ["add", "-A"],
+        ["-c", "user.name=U", "-c", "user.email=u@l", "commit", "-qm", "merged PR"],
+        ["push", "-q"],
+    ):
+        subprocess.run(["git", "-C", str(up), *args], env=e, check=True)
+    return subprocess.run(
+        ["git", "-C", str(up), "rev-parse", "--short=7", "HEAD"], env=e, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_merged_dashboard_change_is_pushed_to_open_sessions(env: dict[str, str], ha: FakeHA) -> None:
+    run(env)
+    sha = merge_upstream(env, "dashboards/energy.yaml", "title: Energy\n")
+
+    assert run(env) == 0
+    assert ha.services == ["/core/api/services/homeassistant/reload_all"]
+    assert ha.tokens == [HA_TOKEN]
+    assert ha.fetched == [None, "lovelace-energy"], "default + YAML dashboards only, never storage ones"
+    assert ha.pongs == 3, "every ping must be answered"
+    assert status(env) == f"success:no_changes:applied {sha}", "status must say a merge was applied"
+
+
+def test_merge_without_yaml_changes_leaves_dashboards_alone(env: dict[str, str], ha: FakeHA) -> None:
+    run(env)
+    merge_upstream(env, "python_scripts/x.py", "x = 1\n")
+
+    assert run(env) == 0
+    assert ha.services == ["/core/api/services/homeassistant/reload_all"]
+    assert ha.tokens == [] and ha.fetched == []
+
+
+def test_dashboard_refresh_failure_does_not_fail_the_run(env: dict[str, str], ha: FakeHA) -> None:
+    run(env)
+    ha.accept_auth = False
+    merge_upstream(env, "dashboards/energy.yaml", "title: Energy\n")
+
+    assert run(env) == 0 and status(env).startswith("success:no_changes:applied ")
+    assert ha.fetched == []
+    assert "Could not refresh open dashboards" in Path(env["CONFIG_DIR"], "gitops_backup.log").read_text()
+
+
+def test_no_merge_means_no_home_assistant_calls(env: dict[str, str], ha: FakeHA) -> None:
+    run(env)
+
+    assert run(env) == 0 and status(env) == "success:no_changes:"
+    assert ha.services == [] and ha.tokens == []
